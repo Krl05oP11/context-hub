@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.0
+chromadb==0.5.17
+ollama==0.3.4
+anthropic==0.31.0
+python-dotenv==1.0.1
+python-multipart==0.0.9
+loguru==0.7.3
+aiohttp==3.9.6
