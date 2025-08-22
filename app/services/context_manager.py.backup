@@ -1,0 +1,234 @@
+import chromadb
+from datetime import datetime
+from chromadb.config import Settings
+import os
+from app.utils.logger import logger
+from app.services.ollama_client import ollama_client
+from typing import List, Optional, Dict, Any
+
+
+class ContextManager:
+    def __init__(self):
+        try:
+            # MODO EMBEBIDO - Sin servidor, datos locales
+            self.chroma_client = chromadb.PersistentClient(
+                path="./chroma_data"  # Carpeta local para datos
+            )
+            
+            # Test de conexión
+            heartbeat = self.chroma_client.heartbeat()
+            logger.info(f"✅ Heartbeat de ChromaDB: {heartbeat}")
+            
+            # INTENTAR OBTENER COLECCIÓN EXISTENTE
+            try:
+                self.collection = self.chroma_client.get_collection(
+                    name="claude_chat_sessions"
+                )
+                logger.info("✅ Colección existente obtenida")
+                
+            except Exception as e:
+                # SI NO EXISTE, CREARLA
+                logger.warning(f"⚠️ Colección no existe, creando: {str(e)}")
+                try:
+                    self.collection = self.chroma_client.create_collection(
+                        name="claude_chat_sessions"
+                        # Sin metadata inicial para evitar errores
+                    )
+                    logger.info("✅ Nueva colección creada")
+                except Exception as create_error:
+                    if "already exists" in str(create_error):
+                        # La colección ya fue creada por otra instancia
+                        self.collection = self.chroma_client.get_collection("claude_chat_sessions")
+                        logger.info("✅ Colección obtenida después de error de creación")
+                    else:
+                        logger.error(f"❌ Error creando colección: {str(create_error)}")
+                        raise
+            
+            logger.info("✅ Conectado a ChromaDB en modo embebido")
+            
+        except Exception as e:
+            logger.error(f"❌ Error conectando a ChromaDB: {str(e)}")
+            self.chroma_client = None
+            self.collection = None
+
+    def is_connected(self):
+        return self.chroma_client is not None and self.collection is not None
+
+    async def _get_embeddings(self, text: str) -> List[float]:
+        """Obtiene embeddings para un texto usando el modelo nomic-embed-text."""
+        try:
+            embedding = await ollama_client.get_embeddings(text)
+            if not embedding:
+                logger.warning("⚠️ No se pudieron generar embeddings, usando vector vacío")
+                return [0.0] * 384  # nomic-embed-text usa 384 dimensiones
+            return embedding
+        except Exception as e:
+            logger.error(f"❌ Error generando embeddings: {str(e)}")
+            return [0.0] * 384
+
+    async def get_all_sessions(self) -> List[str]:
+        """Obtiene todas las sesiones únicas almacenadas en ChromaDB."""
+        try:
+            if not self.is_connected():
+                return []
+                
+            # Para API v2, usar get() con where filtro vacío
+            results = self.collection.get(
+                where={},  # Sin filtros para obtener todo
+                include=["metadatas"],
+                limit=1000
+            )
+
+            # Extraer session_ids únicos de los metadatos
+            sessions = set()
+            if results and results['metadatas']:
+                for metadata in results['metadatas']:
+                    if metadata and 'session_id' in metadata:
+                        sessions.add(metadata['session_id'])
+
+            logger.info(f"📊 Sesiones encontradas: {len(sessions)}")
+            return list(sessions)
+
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo sesiones de ChromaDB: {str(e)}")
+            return []
+
+    async def add_interaction(
+            self,
+            session_id: str,
+            user_message: str,
+            ai_response: str,
+            metadata: Optional[Dict] = None):
+            logger.info(f"🔄 Intentando almacenar interacción para sesión: {session_id}")
+        """Almacena un intercambio completo en la base de datos vectorial."""
+        try:
+            if not self.is_connected():
+                return False
+                
+            full_interaction = f"User: {user_message}\nAssistant: {ai_response}"
+
+            # Generar embedding
+            embedding = await self._get_embeddings(full_interaction)
+
+            # Metadata adicional
+            interaction_metadata = {
+                "session_id": session_id,
+                "type": "interaction",
+                "user_message_length": len(user_message),
+                "ai_response_length": len(ai_response),
+                "timestamp": datetime.now().isoformat(),
+                **(metadata or {})
+            }
+
+            # ID único para el documento
+            doc_id = f"{session_id}_{datetime.now().timestamp()}_{hash(full_interaction)}"
+
+            # Almacenar en ChromaDB
+            self.collection.add(
+                documents=[full_interaction],
+                embeddings=[embedding],
+                metadatas=[interaction_metadata],
+                ids=[doc_id]
+            )
+
+            logger.info(f"💾 Interacción almacenada para sesión '{session_id}'")
+            logger.info(f"✅ Interacción ALMACENADA EXITOSAMENTE: {session_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error almacenando interacción: {str(e)}")
+            return False
+
+    async def get_relevant_context(
+            self,
+            session_id: str,
+            query: str,
+            n_results: int = 5) -> List[str]:
+        """Recupera contexto relevante para una consulta específica."""
+        try:
+            if not self.is_connected():
+                return []
+                
+            # Generar embedding para la consulta
+            query_embedding = await self._get_embeddings(query)
+
+            # Buscar en ChromaDB filtrado por session_id
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where={"session_id": session_id},
+                include=["documents", "metadatas", "distances"]
+            )
+
+            if results and results['documents']:
+                relevant_docs = results['documents'][0]
+                logger.info(f"🔍 Encontrados {len(relevant_docs)} contextos relevantes para sesión '{session_id}'")
+
+                # Filtrar por relevancia (distancia < 1.0 = relevante)
+                formatted_context = []
+                for doc, distance in zip(relevant_docs, results['distances'][0]):
+                    if distance < 1.5:  # Umbral de relevancia
+                        formatted_context.append(doc)
+
+                return formatted_context
+
+            return []
+
+        except Exception as e:
+            logger.error(f"❌ Error recuperando contexto: {str(e)}")
+            return []
+
+    async def get_session_summary(self, session_id: str) -> Optional[str]:
+        """Genera un resumen de toda la sesión usando Ollama."""
+        try:
+            if not self.is_connected():
+                return None
+                
+            # Obtener todas las interacciones de la sesión
+            session_interactions = self.collection.get(
+                where={"session_id": session_id},
+                include=["documents"]
+            )
+
+            if not session_interactions['documents']:
+                return None
+
+            # Unir todas las interacciones para el resumen
+            all_text = "\n\n".join(session_interactions['documents'])
+
+            # Usar Ollama para generar un resumen
+            summary = await ollama_client.generate_summary(all_text, session_id)
+            return summary
+
+        except Exception as e:
+            logger.error(f"❌ Error generando resumen de sesión: {str(e)}")
+            return None
+
+
+# Instancia global del gestor de contexto (inicialización diferida)
+_context_manager_instance = None
+
+
+def get_context_manager():
+    global _context_manager_instance
+    if _context_manager_instance is None:
+        try:
+            _context_manager_instance = ContextManager()
+            logger.info("✅ Context Manager inicializado exitosamente")
+        except Exception as e:
+            logger.error(f"❌ Error inicializando Context Manager: {str(e)}")
+            # Crear una instancia dummy para evitar errores de importación
+            class DummyContextManager:
+                def is_connected(self): return False
+                async def _get_embeddings(self, text: str): return [0.0] * 384
+                async def get_all_sessions(self): return []
+                async def add_interaction(self, *args, **kwargs): return False
+                async def get_relevant_context(self, *args, **kwargs): return []
+                async def get_session_summary(self, *args, **kwargs): return None
+                
+            _context_manager_instance = DummyContextManager()
+    return _context_manager_instance
+
+
+# Alias para compatibilidad
+context_manager = get_context_manager()

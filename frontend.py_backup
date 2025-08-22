@@ -1,0 +1,124 @@
+import streamlit as st
+import requests
+import json
+from datetime import datetime
+
+# Configuración de la página
+st.set_page_config(
+    page_title="ContextHub - Memoria para Claude",
+    page_icon="🧠",
+    layout="wide"
+)
+
+# Título y descripción
+st.title("🧠 ContextHub")
+st.markdown("""
+**Solución de memoria persistente para Claude** - Rompe los límites de contexto con RAG local.
+""")
+
+# Sidebar para configuración
+with st.sidebar:
+    st.header("⚙️ Configuración")
+    session_id = st.text_input("Session ID", value=f"session-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    use_context = st.checkbox("Usar contexto", value=True)
+    api_url = st.text_input("API URL", value="http://localhost:8004")
+    
+    st.divider()
+    st.info("""
+    **Instrucciones:**
+    1. Mantén el mismo Session ID para conversaciones relacionadas
+    2. El sistema buscará automáticamente contexto relevante
+    3. Todo se almacena localmente en ChromaDB
+    """)
+
+# Inicializar estado de la conversación
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "context_used" not in st.session_state:
+    st.session_state.context_used = None
+
+# Mostrar historial de mensajes
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if message["role"] == "assistant" and st.session_state.context_used:
+            with st.expander("📁 Contexto utilizado"):
+                st.write(st.session_state.context_used)
+
+# Input de usuario
+if prompt := st.chat_input("Escribe tu mensaje para Claude..."):
+    # Agregar mensaje de usuario al historial
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Mostrar indicador de progreso
+    with st.chat_message("assistant"):
+        with st.spinner("Claude está pensando con contexto..."):
+            try:
+                # Llamar a la API de ContextHub
+                response = requests.post(
+                    f"{api_url}/api/v1/chat",
+                    json={
+                        "message": prompt,
+                        "session_id": session_id,
+                        "use_context": use_context
+                    },
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    # Mostrar respuesta
+                    st.markdown(result["response"])
+                    
+                    # Guardar en historial
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": result["response"]
+                    })
+                    
+                    # Guardar contexto usado si está disponible
+                    if result.get("context_used"):
+                        st.session_state.context_used = result["context_used"]
+                        with st.expander("📁 Contexto utilizado"):
+                            st.write(result["context_used"])
+                
+                else:
+                    st.error(f"Error en la API: {response.text}")
+            
+            except requests.exceptions.RequestException as e:
+                st.error(f"Error de conexión: {str(e)}")
+            except Exception as e:
+                st.error(f"Error inesperado: {str(e)}")
+
+# Botones de utilidad
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("🔄 Limpiar chat"):
+        st.session_state.messages = []
+        st.session_state.context_used = None
+        st.rerun()
+
+with col2:
+    if st.button("📊 Ver sesiones"):
+        try:
+            sessions_response = requests.get(f"{api_url}/api/v1/sessions")
+            if sessions_response.status_code == 200:
+                sessions = sessions_response.json()
+                st.sidebar.write("### Sesiones activas:")
+                for session in sessions:
+                    st.sidebar.write(f"- {session}")
+        except:
+            st.sidebar.warning("Endpoint de sesiones no disponible")
+
+with col3:
+    if st.button("🩺 Health check"):
+        try:
+            health_response = requests.get(f"{api_url}/health")
+            if health_response.status_code == 200:
+                st.sidebar.success("✅ API saludable")
+            else:
+                st.sidebar.error("❌ API no responde")
+        except:
+            st.sidebar.error("❌ No se puede conectar a la API")
