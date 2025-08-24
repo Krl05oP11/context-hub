@@ -51,3 +51,7 @@ chroma/
 
 # Windows
 Thumbs.db
+.env
+chroma_data/
+*.pyc
+__pycache__/
