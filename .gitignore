@@ -55,3 +55,4 @@ Thumbs.db
 chroma_data/
 *.pyc
 __pycache__/
+chroma_data/

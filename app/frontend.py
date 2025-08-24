@@ -5,13 +5,13 @@ from datetime import datetime
 
 # Configuración de la página
 st.set_page_config(
-    page_title="ContextHub - Memoria para Claude",
+    page_title="ClaudeContextHub - Memoria para Claude",
     page_icon="🧠",
     layout="wide"
 )
 
 # Título y descripción
-st.title("🧠 ContextHub v1.0")
+st.title("🧠 ClaudeContextHub v1.0")
 st.markdown("""
 **Solución de memoria persistente para Claude** - Rompe los límites de contexto con RAG local.
 *Versión 1.0 - Funcionalidad básica estable*
@@ -19,6 +19,7 @@ st.markdown("""
 
 # Sidebar para configuración
 with st.sidebar:
+    st.header("🧠 ClaudeContextHub v1.0")
     st.header("⚙️ Configuración")
     api_url = st.text_input("API URL", value="http://localhost:8006")
     session_id = st.text_input("Session ID", value=f"session-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
