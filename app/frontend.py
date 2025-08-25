@@ -1,8 +1,14 @@
+import sys
+import os
+sys.path.append('/home/carlos/Projects/context-hub')
+
+from app.services.context_manager import get_context_manager
 import streamlit as st
 import requests
 import json
 from datetime import datetime
 
+context_manager = get_context_manager()
 # Configuración de la página
 st.set_page_config(
     page_title="ClaudeContextHub - Memoria para Claude",
@@ -22,15 +28,20 @@ with st.sidebar:
     st.header("🧠 ClaudeContextHub v1.0")
     st.header("⚙️ Configuración")
     api_url = st.text_input("API URL", value="http://localhost:8006")
-    session_id = st.text_input("Session ID", value=f"session-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    
+    # Usar session_id persistente
+    SESSION_ID_FIJO = "usuario_carlos"
+    session_id = st.text_input("Session ID", value=SESSION_ID_FIJO, disabled=True)
+    st.info("💡 Session ID fijo: memoria unificada activada")
+
     use_context = st.checkbox("Usar contexto", value=True)
     
     st.divider()
     st.info("""
     **Instrucciones:**
-    1. Mantén el mismo Session ID para conversaciones relacionadas
-    2. El sistema buscará contexto relevante automáticamente
-    3. Todo se almacena localmente (próximamente)
+    1. Memoria unificada simpre activa
+    2. El sistema buscará en TODAS tus conversaciones
+    3. Contexto infinito habilitado
     """)
 
 # Inicializar estado de la conversación

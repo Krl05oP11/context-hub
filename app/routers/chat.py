@@ -8,6 +8,9 @@ router = APIRouter()
 
 @router.post("/chat")
 async def chat_with_context(request: ChatRequest):
+    # FORZAR SESSION_ID FIJO PARA USUARIO
+    fixed_session_id = "usuario_carlos"
+    
     try:
         context_messages = []
         context_used = False
@@ -16,9 +19,9 @@ async def chat_with_context(request: ChatRequest):
         if request.use_context and context_manager.is_connected():
             try:
                 context_messages = await context_manager.get_relevant_context(
-                    session_id=request.session_id,
+                    session_id=fixed_session_id, # request.session_id,
                     query=request.message,
-                    n_results=3  # Número de contextos a recuperar
+                    n_results=5  # Aumentar la cantidad de contextos a recuperar
                 )
                 context_used = len(context_messages) > 0
                 
@@ -32,10 +35,14 @@ async def chat_with_context(request: ChatRequest):
         # CONSTRUIR MENSAJE CON CONTEXTO
         full_message = request.message
         if context_messages:
-            context_str = "\n\n--- CONTEXTO DE CONVERSACIONES ANTERIORES ---\n"
-            context_str += "\n---\n".join(context_messages)
-            context_str += f"\n\n--- PREGUNTA ACTUAL ---\n"
-            full_message = context_str + request.message
+            context_str = "\n\n".join(context_messages)
+            full_message = f"""Este es el contexto de conversaciones anteriores:
+
+{context_str}
+
+Basándote en este contexto, responde la siguiente pregunta:
+
+Usuario: {request.message}"""
         
         # OBTENER RESPUESTA DE CLAUDE (CORREGIDO: send_message en lugar de chat)
         response = await claude_client.send_message(

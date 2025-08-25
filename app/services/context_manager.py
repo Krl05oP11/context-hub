@@ -124,6 +124,7 @@ class ContextManager:
             # Metadata adicional
             interaction_metadata = {
                 "session_id": session_id,
+                "user_id": "carlos",
                 "type": "interaction",
                 "user_message_length": len(user_message),
                 "ai_response_length": len(ai_response),
@@ -167,7 +168,7 @@ class ContextManager:
             results = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results,
-                where={"session_id": session_id},
+#                where={"session_id": session_id},
                 include=["documents", "metadatas", "distances"]
             )
             
